@@ -9,6 +9,10 @@ use std::fs::File;
 use std::io::Read;
 use std::time::Duration;
 
+fn empty_string() -> String {
+    "".to_string()
+}
+
 #[derive(Debug, Deserialize)]
 struct Config {
     redis: RedisConfig,
@@ -18,6 +22,10 @@ struct Config {
 #[derive(Debug, Deserialize)]
 struct RedisConfig {
     host: String,
+    #[serde(default = "empty_string")]
+    username: String,
+    #[serde(default = "empty_string")]
+    password: String,
     db: Option<u8>,
     key: String,
 }
@@ -25,6 +33,19 @@ struct RedisConfig {
 #[derive(Debug, Deserialize)]
 struct LokiConfig {
     url: String,
+}
+
+impl RedisConfig {
+
+    pub fn to_dsn(&self) -> String {
+        let dsn = if self.username != "" || self.password != "" {
+            format!("redis://{}:{}@{}/", self.username, self.password, self.host)
+        } else {
+            format!("redis://{}/", self.host)
+        };
+        dsn
+    }
+
 }
 
 fn parse_config() -> Config {
@@ -41,13 +62,16 @@ fn parse_config() -> Config {
 
 async fn get_redis_connection(config: &RedisConfig) -> Result<Connection, RedisError> {
     // connect to redis
-    let client = redis::Client::open(format!("redis://{}/", config.host))?;
+    let client = redis::Client::open(config.to_dsn())?;
     let mut con = client.get_async_connection().await?;
 
-    let _: () = redis::cmd("SELECT")
-        .arg(config.db.unwrap_or(0))
-        .query_async(&mut con)
-        .await?;
+    if let Some(db) = config.db {
+        println!("Use redis db {}", db);
+        redis::cmd("SELECT")
+            .arg(db)
+            .query_async(&mut con)
+            .await?;
+    }
 
     Ok(con)
 }
