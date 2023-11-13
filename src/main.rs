@@ -4,8 +4,10 @@ use hyper::client::HttpConnector;
 use redis::RedisError;
 use redis::aio::Connection;
 use serde::Deserialize;
+use tokio::time;
 use std::fs::File;
 use std::io::Read;
+use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -83,34 +85,63 @@ async fn push_log(http: &Client<HttpConnector>, url: &String, log: String) -> Re
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = parse_config();
 
-    let mut r = get_redis_connection(&config.redis).await?;
+    let mut redis_conn_result = get_redis_connection(&config.redis).await;
+
+    let mut con = match redis_conn_result {
+        Ok(r) => r,
+        Err(e) => panic!("Connection to redis error: {}", e)
+    };
+
     let http = get_http_client();
 
-    loop {
-        let p: Option<(String, String)> = redis::cmd("BRPOP")
+    'pusher: loop {
+        let pop_result: Result<Option<(String, String)>, RedisError> = redis::cmd("BRPOP")
             .arg(&config.redis.key)
             .arg(5)
-            .query_async(&mut r)
-            .await?;
+            .query_async(&mut con)
+            .await;
 
-        if let Some((k, v)) = p {
-            println!("BRPOP: {} {}", k, v);
+        match pop_result {
+            Ok(p) => {
+                if let Some((k, v)) = p {
+                    println!("BRPOP: {} {}", k, v);
 
-            push_log(&http, &config.loki.url, v).await?;
-            // let uri = "https://m.doustar.cn/".parse().unwrap();
+                    push_log(&http, &config.loki.url, v).await?;
+                    // let uri = "https://m.doustar.cn/".parse().unwrap();
 
-            // let res = http.get(uri).await.unwrap();
-            // println!("{}", res.status());
-            // println!("{:?}", res.headers());
-            // let body = res.into_body();
-            // let bytes = hyper::body::to_bytes(body).await.unwrap();
-            // println!("{}", String::from_utf8_lossy(&bytes));
-        } else {
-            println!("BRPOP None");
-        }
+                    // let res = http.get(uri).await.unwrap();
+                    // println!("{}", res.status());
+                    // println!("{:?}", res.headers());
+                    // let body = res.into_body();
+                    // let bytes = hyper::body::to_bytes(body).await.unwrap();
+                    // println!("{}", String::from_utf8_lossy(&bytes));
+                } else {
+                    println!("BRPOP None");
+                }
+            },
+            Err(e) => {
+                println!("Redis pop error: {}, try to reconnect", e);
+
+                // Reconnect to redis
+                loop {
+                    redis_conn_result = get_redis_connection(&config.redis).await;
+
+                    match redis_conn_result {
+                        Ok(r) => {
+                            con = r;
+                            println!("Connect to redis success.");
+                            continue 'pusher;
+                        },
+                        Err(e) => {
+                            println!("Connect to redis failed: {}, try to reconnect..", e);
+                            time::sleep(Duration::from_secs(2)).await;
+                            continue;
+                        }
+                    };
+                }
+            }
+        };
     }
-
-    // http_request().await;
 
     // Ok(())
 }
