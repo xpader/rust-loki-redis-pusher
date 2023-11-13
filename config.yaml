@@ -1,0 +1,7 @@
+redis:
+  host: 192.168.1.2:6379
+  # db: 1
+  key: loki_push_queue
+
+loki:
+  url: http://192.168.1.3:3100/loki/api/v1/push
