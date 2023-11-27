@@ -8,6 +8,7 @@ use tokio::time;
 use std::fs::File;
 use std::io::Read;
 use std::time::Duration;
+use std::env;
 
 fn empty_string() -> String {
     "".to_string()
@@ -49,13 +50,30 @@ impl RedisConfig {
 }
 
 fn parse_config() -> Config {
-    // 打开文件并读取内容
-    let mut file = File::open("config.yaml").expect("打开配置文件失败");
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).expect("读取配置文件失败");
+    let config_path = env::current_dir().expect("无法获取当前工作目录").join("config.yaml");
 
-    // 解析YAML
-    let config: Config = serde_yaml::from_str(&contents).expect("配置文件解析失败");
+    let config = if config_path.exists() {
+        let path_str = config_path.to_str().unwrap();
+        let mut file = File::open(path_str).expect("打开配置文件失败");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).expect("读取配置文件失败");
+        serde_yaml::from_str(&contents).expect("配置文件解析失败")
+    } else {
+        println!("{:?}", env::vars());
+
+        Config {
+            redis: RedisConfig {
+                host: env::var("REDIS_HOST").expect("No found env REDIS_HOST."),
+                username: env::var("REDIS_USERNAME").unwrap_or_else(|_| "".to_string()),
+                password: env::var("REDIS_PASSWORD").unwrap_or_else(|_| "".to_string()),
+                db: env::var("REDIS_DB").unwrap_or_default().parse().ok(),
+                key: env::var("REDIS_KEY").unwrap_or_else(|_| "loki_push_queue".to_string())
+            },
+            loki: LokiConfig {
+                url: env::var("LOKI_URL").unwrap_or_else(|_| "http://127.0.0.1:3100/loki/api/v1/push".to_string())
+            }
+        }
+    };
 
     config
 }
