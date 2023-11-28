@@ -66,7 +66,7 @@ fn parse_config() -> Config {
                 host: env::var("REDIS_HOST").expect("No found env REDIS_HOST."),
                 username: env::var("REDIS_USERNAME").unwrap_or_else(|_| "".to_string()),
                 password: env::var("REDIS_PASSWORD").unwrap_or_else(|_| "".to_string()),
-                db: env::var("REDIS_DB").unwrap_or_default().parse().ok(),
+                db: env::var("REDIS_DB").unwrap_or("0".to_string()).parse().ok(),
                 key: env::var("REDIS_KEY").unwrap_or_else(|_| "loki_push_queue".to_string())
             },
             loki: LokiConfig {
