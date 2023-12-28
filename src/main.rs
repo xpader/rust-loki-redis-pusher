@@ -1,6 +1,6 @@
 use hyper::{Client, Request, Method, Body};
 use hyper::client::HttpConnector;
-// use hyper_tls::HttpsConnector;
+use hyper_tls::HttpsConnector;
 use redis::RedisError;
 use redis::aio::Connection;
 use serde::Deserialize;
@@ -9,6 +9,7 @@ use std::fs::File;
 use std::io::Read;
 use std::time::Duration;
 use std::env;
+use base64::{Engine as _, engine::general_purpose};
 
 fn empty_string() -> String {
     "".to_string()
@@ -34,6 +35,10 @@ struct RedisConfig {
 #[derive(Debug, Deserialize)]
 struct LokiConfig {
     url: String,
+    #[serde(default = "empty_string")]
+    username: String,
+    #[serde(default = "empty_string")]
+    password: String
 }
 
 impl RedisConfig {
@@ -48,6 +53,8 @@ impl RedisConfig {
     }
 
 }
+
+type HttpClient = Client<HttpsConnector<HttpConnector>>;
 
 fn parse_config() -> Config {
     let config_path = env::current_dir().expect("无法获取当前工作目录").join("config.yaml");
@@ -70,7 +77,9 @@ fn parse_config() -> Config {
                 key: env::var("REDIS_KEY").unwrap_or_else(|_| "loki_push_queue".to_string())
             },
             loki: LokiConfig {
-                url: env::var("LOKI_URL").unwrap_or_else(|_| "http://127.0.0.1:3100/loki/api/v1/push".to_string())
+                url: env::var("LOKI_URL").unwrap_or_else(|_| "http://127.0.0.1:3100/loki/api/v1/push".to_string()),
+                username: env::var("LOKI_USERNAME").unwrap_or_else(|_| "".to_string()),
+                password: env::var("LOKI_PASSWORD").unwrap_or_else(|_| "".to_string()),
             }
         }
     };
@@ -94,28 +103,27 @@ async fn get_redis_connection(config: &RedisConfig) -> Result<Connection, RedisE
     Ok(con)
 }
 
-fn get_http_client() -> Client<HttpConnector> {
-    let client = Client::new();
-    // let https = HttpsConnector::new();
-    // let client = Client::builder().build::<_, hyper::Body>(https);
+fn get_http_client() -> HttpClient {
+    // let client = Client::new();
+    let https = HttpsConnector::new();
+    let client = Client::builder().build::<_, hyper::Body>(https);
     client
 }
 
-async fn push_log(http: &Client<HttpConnector>, url: &String, log: String) -> Result<(), hyper::Error> {
-    // let uri = "https://m.doustar.cn/".parse().unwrap();
-    // let uri = url.clone().parse().unwrap();
-
-    let req = Request::builder()
+async fn push_log(http: &HttpClient, loki: &LokiConfig, log: String, auth: &Option<String>) -> Result<(), hyper::Error> {
+    let mut builder = Request::builder()
         .method(Method::POST)
-        .uri(url)
-        .header("content-type", "application/json")
-        .body(Body::from(log)).unwrap();
+        .uri(&loki.url)
+        .header("content-type", "application/json");
 
-    // let res = http.get(uri).await.unwrap();
+    if let Some(auth_str) = auth {
+        builder = builder.header("Authorization", auth_str);
+    }
+
+    let req = builder.body(Body::from(log)).unwrap();
     let res = http.request(req).await?;
 
     println!("{}", res.status());
-    // println!("{:?}", res.headers());
     let body = res.into_body();
     let bytes = hyper::body::to_bytes(body).await.unwrap();
     println!("{}", String::from_utf8_lossy(&bytes));
@@ -136,6 +144,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let http = get_http_client();
 
+    // authorization for loki api
+    let auth = if config.loki.username != "" || config.loki.password != "" {
+        let mut b64 = general_purpose::STANDARD.encode(format!("{}:{}", config.loki.username, config.loki.password));
+        b64.insert_str(0, "Basic ");
+        Some(b64)
+    } else {
+        None
+    };
+
     'pusher: loop {
         let pop_result: Result<Option<(String, String)>, RedisError> = redis::cmd("BRPOP")
             .arg(&config.redis.key)
@@ -148,9 +165,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 if let Some((k, v)) = p {
                     println!("BRPOP: {} {}", k, v);
 
-                    push_log(&http, &config.loki.url, v).await?;
-                    // let uri = "https://m.doustar.cn/".parse().unwrap();
+                    let pushed = push_log(&http, &config.loki, v, &auth).await;
 
+                    if let Err(err) = pushed {
+                        println!("Push to loki error: {:}", err);
+                    }
+
+                    // let uri = "https://example.com/".parse().unwrap();
                     // let res = http.get(uri).await.unwrap();
                     // println!("{}", res.status());
                     // println!("{:?}", res.headers());

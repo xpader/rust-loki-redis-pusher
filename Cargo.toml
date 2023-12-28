@@ -9,6 +9,7 @@ edition = "2021"
 redis = { version = "0.23.3", features = ["tokio-comp"] }
 hyper = { version = "0.14", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
-# hyper-tls = "0.5.0"
+hyper-tls = "0.5.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9.27"
+base64 = "0.21.5"
