@@ -1,6 +1,6 @@
 use hyper::{Client, Request, Method, Body};
 use hyper::client::HttpConnector;
-use hyper_tls::HttpsConnector;
+use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use redis::RedisError;
 use redis::aio::Connection;
 use serde::Deserialize;
@@ -105,7 +105,15 @@ async fn get_redis_connection(config: &RedisConfig) -> Result<Connection, RedisE
 
 fn get_http_client() -> HttpClient {
     // let client = Client::new();
-    let https = HttpsConnector::new();
+    // let https = HttpsConnector::new();
+
+    let https = HttpsConnectorBuilder::new()
+        .with_native_roots()
+        .unwrap()
+        .https_or_http()
+        .enable_http1()
+        .build();
+
     let client = Client::builder().build::<_, hyper::Body>(https);
     client
 }
