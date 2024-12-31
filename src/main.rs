@@ -96,7 +96,7 @@ async fn get_redis_connection(config: &RedisConfig) -> Result<Connection, RedisE
         println!("Use redis db {}", db);
         redis::cmd("SELECT")
             .arg(db)
-            .query_async(&mut con)
+            .query_async::<_, ()>(&mut con)
             .await?;
     }
 
